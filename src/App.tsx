@@ -1,8 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Line, Group, Circle } from 'react-konva';
 import Konva from 'konva';
+import { getMagicWandPolygon } from './utils/cv';
 
-// Typings for Electron API
 declare global {
   interface Window {
     electronAPI: {
@@ -12,7 +12,7 @@ declare global {
   }
 }
 
-type Tool = 'select' | 'rect' | 'polygon' | 'freehand';
+type Tool = 'select' | 'rect' | 'polygon' | 'freehand' | 'magicwand';
 
 interface BaseShape {
   id: string;
@@ -28,7 +28,7 @@ interface RectShape extends BaseShape {
 interface PolyShape extends BaseShape {
   type: 'polygon' | 'freehand';
   points: number[];
-  x?: number; // For dragging
+  x?: number;
   y?: number;
 }
 type Shape = RectShape | PolyShape;
@@ -36,8 +36,8 @@ type Shape = RectShape | PolyShape;
 const App: React.FC = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [imagePath, setImagePath] = useState<string | null>(null);
+  const [imageData, setImageData] = useState<ImageData | null>(null);
   
-  // History State
   const [past, setPast] = useState<Shape[][]>([]);
   const [shapes, setShapes] = useState<Shape[]>([]);
   const [future, setFuture] = useState<Shape[][]>([]);
@@ -45,18 +45,16 @@ const App: React.FC = () => {
   const [tool, setTool] = useState<Tool>('select');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportSVG, setExportSVG] = useState(false);
+  const [tolerance, setTolerance] = useState(30);
 
-  // Drawing State
   const [isDrawing, setIsDrawing] = useState(false);
   const [newRect, setNewRect] = useState<Partial<RectShape> | null>(null);
   const [newPoly, setNewPoly] = useState<number[]>([]);
   
-  // Zoom & Pan State
   const [scale, setScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const stageRef = useRef<Konva.Stage>(null);
 
-  // Helper to commit changes to history
   const commit = useCallback((newShapes: Shape[]) => {
     setPast((prev) => [...prev, shapes]);
     setShapes(newShapes);
@@ -87,7 +85,6 @@ const App: React.FC = () => {
     setSelectedId(null);
   }, [selectedId, shapes, commit]);
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
@@ -115,6 +112,16 @@ const App: React.FC = () => {
         setFuture([]);
         setScale(1);
         setStagePos({ x: 0, y: 0 });
+        
+        // Caching ImageData for Magic Wand
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          setImageData(ctx.getImageData(0, 0, img.width, img.height));
+        }
       };
     }
   };
@@ -129,7 +136,6 @@ const App: React.FC = () => {
   };
 
   const handleMouseDown = (e: any) => {
-    // If clicking on a shape, let its onClick handle it, unless we are drawing
     if (tool === 'select') {
       const clickedOnEmpty = e.target === e.target.getStage() || e.target.name() === 'backgroundImage';
       if (clickedOnEmpty) setSelectedId(null);
@@ -137,6 +143,15 @@ const App: React.FC = () => {
     }
 
     const pos = getPointerPos(e);
+
+    if (tool === 'magicwand') {
+      if (!imageData) return;
+      const polyPoints = getMagicWandPolygon(imageData, pos.x, pos.y, tolerance, 2.0);
+      if (polyPoints.length > 4) {
+        commit([...shapes, { id: Date.now().toString(), type: 'polygon', points: polyPoints }]);
+      }
+      return;
+    }
 
     if (tool === 'rect') {
       setIsDrawing(true);
@@ -148,12 +163,10 @@ const App: React.FC = () => {
       if (newPoly.length === 0) {
         setNewPoly([pos.x, pos.y]);
       } else {
-        // Check if clicked near start point to close
         const startX = newPoly[0];
         const startY = newPoly[1];
         const dist = Math.sqrt(Math.pow(pos.x - startX, 2) + Math.pow(pos.y - startY, 2));
         if (dist < 15 / scale && newPoly.length > 4) {
-          // Close polygon
           commit([...shapes, { id: Date.now().toString(), type: 'polygon', points: newPoly }]);
           setNewPoly([]);
         } else {
@@ -200,7 +213,6 @@ const App: React.FC = () => {
     }
   };
 
-  // Zoom logic
   const handleWheel = (e: any) => {
     e.evt.preventDefault();
     const stage = stageRef.current;
@@ -252,14 +264,12 @@ const App: React.FC = () => {
     const scaleX = image!.width;
     const scaleY = image!.height;
     
-    // Convert shapes to relative coordinates so backend doesn't lose resolution
     const crops = shapes.map(s => {
       if (s.type === 'rect') {
         const rs = s as RectShape;
         return { type: 'rect', x: rs.x / scaleX, y: rs.y / scaleY, width: rs.width / scaleX, height: rs.height / scaleY };
       } else {
         const ps = s as PolyShape;
-        // Adjust points by node translation if it was moved
         const xOffset = ps.x || 0;
         const yOffset = ps.y || 0;
         const pts = [];
@@ -280,7 +290,7 @@ const App: React.FC = () => {
 
   return (
     <div className="app-container">
-      <div className="toolbar">
+      <div className="toolbar" style={{ overflowY: 'auto' }}>
         <h2>Image Formatter</h2>
         
         <button onClick={handleOpenFile}>Abrir Arquivo</button>
@@ -288,6 +298,15 @@ const App: React.FC = () => {
         <div className="tools-group">
           <h3>Ferramentas</h3>
           <button className={`tool-btn ${tool === 'select' ? 'active' : ''}`} onClick={() => { setTool('select'); setNewPoly([]); }}>Selecionar / Pan</button>
+          
+          <button className={`tool-btn ${tool === 'magicwand' ? 'active' : ''}`} onClick={() => { setTool('magicwand'); setNewPoly([]); setSelectedId(null); }} style={{ borderColor: tool === 'magicwand' ? '#ff00ff' : '', backgroundColor: tool === 'magicwand' ? 'rgba(255,0,255,0.1)' : '' }}>🪄 Varinha Mágica</button>
+          {tool === 'magicwand' && (
+            <div style={{ fontSize: 12, padding: '5px 0' }}>
+              <label>Tolerância de Cor: {tolerance}</label>
+              <input type="range" min="0" max="100" value={tolerance} onChange={e => setTolerance(parseInt(e.target.value))} style={{ width: '100%' }} />
+            </div>
+          )}
+
           <button className={`tool-btn ${tool === 'rect' ? 'active' : ''}`} onClick={() => { setTool('rect'); setNewPoly([]); setSelectedId(null); }}>Retângulo</button>
           <button className={`tool-btn ${tool === 'polygon' ? 'active' : ''}`} onClick={() => { setTool('polygon'); setNewPoly([]); setSelectedId(null); }}>Polígono (Pontos)</button>
           <button className={`tool-btn ${tool === 'freehand' ? 'active' : ''}`} onClick={() => { setTool('freehand'); setNewPoly([]); setSelectedId(null); }}>Desenho Livre</button>
@@ -307,7 +326,7 @@ const App: React.FC = () => {
           <h3>Exportar</h3>
           <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}>
             <input type="checkbox" checked={exportSVG} onChange={e => setExportSVG(e.target.checked)} />
-            Exportar SVG (Vetores de Corte)
+            Exportar SVG (Vetores)
           </label>
           <button onClick={handleCrop} style={{ backgroundColor: '#28a745' }}>Recortar e Salvar</button>
         </div>
@@ -328,15 +347,15 @@ const App: React.FC = () => {
             y={stagePos.y}
             draggable={tool === 'select'}
             ref={stageRef}
+            style={{ cursor: tool === 'magicwand' ? 'crosshair' : 'default' }}
           >
             <Layer>
               <KonvaImage image={image} name="backgroundImage" />
               
-              {/* Existing Shapes */}
               {shapes.map((shape) => {
                 const isSelected = shape.id === selectedId;
-                const strokeColor = isSelected ? 'red' : 'green';
-                const fillColor = isSelected ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 0, 0.2)';
+                const strokeColor = isSelected ? 'red' : (shape.type === 'polygon' || shape.type === 'freehand' ? 'cyan' : 'green');
+                const fillColor = isSelected ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 255, 0.2)';
 
                 if (shape.type === 'rect') {
                   const r = shape as RectShape;
@@ -347,8 +366,8 @@ const App: React.FC = () => {
                       y={r.y}
                       width={r.width}
                       height={r.height}
-                      fill={fillColor}
-                      stroke={strokeColor}
+                      fill={isSelected ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 0, 0.2)'}
+                      stroke={isSelected ? 'red' : 'green'}
                       strokeWidth={2 / scale}
                       draggable={tool === 'select'}
                       onClick={() => tool === 'select' && setSelectedId(r.id)}
@@ -382,7 +401,6 @@ const App: React.FC = () => {
                 }
               })}
               
-              {/* Drawing Previews */}
               {newRect && (
                 <Rect
                   x={newRect.x}
@@ -398,12 +416,11 @@ const App: React.FC = () => {
                 <Group>
                   <Line
                     points={newPoly}
-                    stroke="green"
+                    stroke="cyan"
                     strokeWidth={2 / scale}
                     tension={tool === 'freehand' ? 0.5 : 0}
                     closed={false}
                   />
-                  {/* Show closing hint for polygon */}
                   {tool === 'polygon' && newPoly.length >= 2 && (
                     <Circle x={newPoly[0]} y={newPoly[1]} radius={5 / scale} fill="yellow" stroke="black" strokeWidth={1/scale} />
                   )}
