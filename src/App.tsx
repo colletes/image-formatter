@@ -1,5 +1,5 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Stage, Layer, Image as KonvaImage, Rect, Line, Group } from 'react-konva';
+import React, { useState, useRef } from 'react';
+import { Stage, Layer, Image as KonvaImage, Rect } from 'react-konva';
 
 // Typings for Electron API
 declare global {
