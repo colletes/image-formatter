@@ -44,6 +44,7 @@ const App: React.FC = () => {
   
   const [tool, setTool] = useState<Tool>('select');
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [clipboard, setClipboard] = useState<Shape | null>(null);
   const [exportSVG, setExportSVG] = useState(false);
   const [fileNamePrefix, setFileNamePrefix] = useState('');
   const [tolerance, setTolerance] = useState(30);
@@ -101,17 +102,40 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Evita ações se estiver digitando em um input
+      if (document.activeElement?.tagName === 'INPUT') return;
+
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
         deleteSelected();
       }
-      if (e.key === 'z' && (e.metaKey || e.ctrlKey)) {
+      if (e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey)) {
         if (e.shiftKey) redo();
         else undo();
+      }
+      if (e.key.toLowerCase() === 'c' && (e.metaKey || e.ctrlKey) && selectedId) {
+        const shapeToCopy = shapes.find(s => s.id === selectedId);
+        if (shapeToCopy) setClipboard(shapeToCopy);
+      }
+      if (e.key.toLowerCase() === 'v' && (e.metaKey || e.ctrlKey) && clipboard) {
+        const newShape = JSON.parse(JSON.stringify(clipboard));
+        newShape.id = Date.now().toString() + Math.random();
+        
+        if (newShape.type === 'rect') {
+          newShape.x += 20 / scale;
+          newShape.y += 20 / scale;
+        } else {
+          newShape.x = (newShape.x || 0) + 20 / scale;
+          newShape.y = (newShape.y || 0) + 20 / scale;
+        }
+        
+        commit([...shapes, newShape]);
+        setSelectedId(newShape.id);
+        setTool('select');
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, deleteSelected, past, future, shapes]);
+  }, [selectedId, deleteSelected, past, future, shapes, clipboard, commit, scale]);
 
   const handleOpenFile = async () => {
     const result = await window.electronAPI.openFile();
