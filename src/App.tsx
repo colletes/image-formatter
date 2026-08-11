@@ -118,9 +118,9 @@ const App: React.FC = () => {
         setClipboard(shapesToCopy);
       }
       if (e.key.toLowerCase() === 'v' && (e.metaKey || e.ctrlKey) && clipboard.length > 0) {
-        const newShapesGroup = clipboard.map(c => {
+        const newShapesGroup = clipboard.map((c, index) => {
           const newShape = JSON.parse(JSON.stringify(c));
-          newShape.id = Date.now().toString() + Math.random();
+          newShape.id = `copy_${Date.now()}_${index}_${Math.floor(Math.random() * 10000)}`;
           if (newShape.type === 'rect') {
             newShape.x += 20 / scale;
             newShape.y += 20 / scale;
@@ -327,25 +327,33 @@ const App: React.FC = () => {
     };
   };
 
-  const handleDragMove = (e: any, shapeId: string) => {
-    if (tool !== 'select' || !isSnapEnabled || selectedIds.length > 1) return;
-    const node = e.target;
+  const getDragBoundFunc = (shapeId: string) => (pos: any) => {
+    if (tool !== 'select' || !isSnapEnabled || selectedIds.length > 1) return pos;
+    const s = shapes.find(x => x.id === shapeId);
+    if (!s) return pos;
+
+    const scaleX = stageRef.current?.scaleX() || 1;
+    const scaleY = stageRef.current?.scaleY() || 1;
+    const stageX = stageRef.current?.x() || 0;
+    const stageY = stageRef.current?.y() || 0;
+
+    // pos is absolute stage position (pixels)
+    // we need to convert it back to shape coordinates to compare with other shapes
+    const localX = (pos.x - stageX) / scaleX;
+    const localY = (pos.y - stageY) / scaleY;
+
+    const w = s.type === 'rect' ? (s as RectShape).width : 0;
+    const h = s.type === 'rect' ? (s as RectShape).height : 0;
+
+    const myV = [localX, localX + w/2, localX + w];
+    const myH = [localY, localY + h/2, localY + h];
     
-    // Snapping logic
-    const x = node.x();
-    const y = node.y();
-    const w = (node.width() || 0) * node.scaleX();
-    const h = (node.height() || 0) * node.scaleY();
-    
-    const myV = [x, x + w/2, x + w];
-    const myH = [y, y + h/2, y + h];
-    
-    const snapDist = 10 / scale;
+    const snapDist = 10 / scaleX;
     let minDx = Infinity, minDy = Infinity;
 
-    shapes.forEach(s => {
-      if (s.id === shapeId) return;
-      const target = getShapeGuides(s);
+    shapes.forEach(sh => {
+      if (sh.id === shapeId) return;
+      const target = getShapeGuides(sh);
       
       myV.forEach(mv => {
         target.v.forEach(tv => {
@@ -360,8 +368,10 @@ const App: React.FC = () => {
       });
     });
 
-    if (Math.abs(minDx) < snapDist) node.x(x + minDx);
-    if (Math.abs(minDy) < snapDist) node.y(y + minDy);
+    return {
+      x: Math.abs(minDx) < snapDist ? pos.x + (minDx * scaleX) : pos.x,
+      y: Math.abs(minDy) < snapDist ? pos.y + (minDy * scaleY) : pos.y
+    };
   };
 
   const alignSelected = (alignment: string) => {
@@ -606,8 +616,8 @@ const App: React.FC = () => {
                       stroke={strokeColor}
                       strokeWidth={2 / scale}
                       draggable={tool === 'select'}
+                      dragBoundFunc={getDragBoundFunc(r.id)}
                       onClick={(e) => handleShapeClick(r.id, e)}
-                      onDragMove={(e) => handleDragMove(e, r.id)}
                       onMouseEnter={(e) => {
                         if (tool === 'select') {
                           const container = e.target.getStage()?.container();
@@ -665,8 +675,8 @@ const App: React.FC = () => {
                       closed={true}
                       tension={p.type === 'freehand' ? 0.5 : 0}
                       draggable={tool === 'select'}
+                      dragBoundFunc={getDragBoundFunc(p.id)}
                       onClick={(e) => handleShapeClick(p.id, e)}
-                      onDragMove={(e) => handleDragMove(e, p.id)}
                       onMouseEnter={(e) => {
                         if (tool === 'select') {
                           const container = e.target.getStage()?.container();
