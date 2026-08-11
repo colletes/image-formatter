@@ -33,7 +33,7 @@ interface PolyShape extends BaseShape {
   x?: number;
   y?: number;
 }
-type Shape = RectShape | PolyShape;
+export type Shape = RectShape | PolyShape;
 
 const App: React.FC = () => {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
@@ -45,11 +45,13 @@ const App: React.FC = () => {
   const [future, setFuture] = useState<Shape[][]>([]);
   
   const [tool, setTool] = useState<Tool>('select');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [clipboard, setClipboard] = useState<Shape | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [clipboard, setClipboard] = useState<Shape[]>([]);
+  
   const [exportSVG, setExportSVG] = useState(false);
   const [fileNamePrefix, setFileNamePrefix] = useState('');
   const [tolerance, setTolerance] = useState(30);
+  const [isSnapEnabled, setIsSnapEnabled] = useState(true);
 
   const [isDrawing, setIsDrawing] = useState(false);
   const [newRect, setNewRect] = useState<Partial<RectShape> | null>(null);
@@ -61,16 +63,14 @@ const App: React.FC = () => {
   const trRef = useRef<Konva.Transformer>(null);
 
   useEffect(() => {
-    if (selectedId && trRef.current && stageRef.current) {
-      const node = stageRef.current.findOne('#' + selectedId);
-      if (node) {
-        trRef.current.nodes([node]);
-        trRef.current.getLayer()?.batchDraw();
-      }
+    if (selectedIds.length > 0 && trRef.current && stageRef.current) {
+      const nodes = selectedIds.map(id => stageRef.current?.findOne('#' + id)).filter(Boolean) as Konva.Node[];
+      trRef.current.nodes(nodes);
+      trRef.current.getLayer()?.batchDraw();
     } else if (trRef.current) {
       trRef.current.nodes([]);
     }
-  }, [selectedId, shapes]);
+  }, [selectedIds, shapes]);
 
   const commit = useCallback((newShapes: Shape[]) => {
     setPast((prev) => [...prev, shapes]);
@@ -84,7 +84,7 @@ const App: React.FC = () => {
     setPast(past.slice(0, -1));
     setFuture([shapes, ...future]);
     setShapes(previous);
-    setSelectedId(null);
+    setSelectedIds([]);
   };
 
   const redo = () => {
@@ -93,51 +93,76 @@ const App: React.FC = () => {
     setFuture(future.slice(1));
     setPast([...past, shapes]);
     setShapes(next);
-    setSelectedId(null);
+    setSelectedIds([]);
   };
 
   const deleteSelected = useCallback(() => {
-    if (!selectedId) return;
-    commit(shapes.filter(s => s.id !== selectedId));
-    setSelectedId(null);
-  }, [selectedId, shapes, commit]);
+    if (selectedIds.length === 0) return;
+    commit(shapes.filter(s => !selectedIds.includes(s.id)));
+    setSelectedIds([]);
+  }, [selectedIds, shapes, commit]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Evita ações se estiver digitando em um input
       if (document.activeElement?.tagName === 'INPUT') return;
 
-      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedIds.length > 0) {
         deleteSelected();
       }
       if (e.key.toLowerCase() === 'z' && (e.metaKey || e.ctrlKey)) {
         if (e.shiftKey) redo();
         else undo();
       }
-      if (e.key.toLowerCase() === 'c' && (e.metaKey || e.ctrlKey) && selectedId) {
-        const shapeToCopy = shapes.find(s => s.id === selectedId);
-        if (shapeToCopy) setClipboard(shapeToCopy);
+      if (e.key.toLowerCase() === 'c' && (e.metaKey || e.ctrlKey) && selectedIds.length > 0) {
+        const shapesToCopy = shapes.filter(s => selectedIds.includes(s.id));
+        setClipboard(shapesToCopy);
       }
-      if (e.key.toLowerCase() === 'v' && (e.metaKey || e.ctrlKey) && clipboard) {
-        const newShape = JSON.parse(JSON.stringify(clipboard));
-        newShape.id = Date.now().toString() + Math.random();
+      if (e.key.toLowerCase() === 'v' && (e.metaKey || e.ctrlKey) && clipboard.length > 0) {
+        const newShapesGroup = clipboard.map(c => {
+          const newShape = JSON.parse(JSON.stringify(c));
+          newShape.id = Date.now().toString() + Math.random();
+          if (newShape.type === 'rect') {
+            newShape.x += 20 / scale;
+            newShape.y += 20 / scale;
+          } else {
+            newShape.x = (newShape.x || 0) + 20 / scale;
+            newShape.y = (newShape.y || 0) + 20 / scale;
+          }
+          return newShape;
+        });
         
-        if (newShape.type === 'rect') {
-          newShape.x += 20 / scale;
-          newShape.y += 20 / scale;
-        } else {
-          newShape.x = (newShape.x || 0) + 20 / scale;
-          newShape.y = (newShape.y || 0) + 20 / scale;
-        }
-        
-        commit([...shapes, newShape]);
-        setSelectedId(newShape.id);
+        commit([...shapes, ...newShapesGroup]);
+        setSelectedIds(newShapesGroup.map(s => s.id));
         setTool('select');
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && selectedIds.length > 0) {
+        e.preventDefault();
+        const step = e.shiftKey ? 10 / scale : 1 / scale;
+        let dx = 0, dy = 0;
+        if (e.key === 'ArrowUp') dy = -step;
+        if (e.key === 'ArrowDown') dy = step;
+        if (e.key === 'ArrowLeft') dx = -step;
+        if (e.key === 'ArrowRight') dx = step;
+        
+        const newShapes = shapes.map(s => {
+          if (selectedIds.includes(s.id)) {
+            if (s.type === 'rect') {
+              const rs = s as RectShape;
+              return { ...rs, x: rs.x + dx, y: rs.y + dy };
+            } else {
+              const ps = s as PolyShape;
+              return { ...ps, x: (ps.x || 0) + dx, y: (ps.y || 0) + dy };
+            }
+          }
+          return s;
+        });
+        commit(newShapes);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, deleteSelected, past, future, shapes, clipboard, commit, scale]);
+  }, [selectedIds, deleteSelected, past, future, shapes, clipboard, commit, scale]);
 
   const handleOpenFile = async () => {
     const result = await window.electronAPI.openFile();
@@ -153,7 +178,6 @@ const App: React.FC = () => {
         setScale(1);
         setStagePos({ x: 0, y: 0 });
         
-        // Caching ImageData for Magic Wand
         const canvas = document.createElement('canvas');
         canvas.width = img.width;
         canvas.height = img.height;
@@ -178,7 +202,7 @@ const App: React.FC = () => {
   const handleMouseDown = (e: any) => {
     if (tool === 'select') {
       const clickedOnEmpty = e.target === e.target.getStage() || e.target.name() === 'backgroundImage';
-      if (clickedOnEmpty) setSelectedId(null);
+      if (clickedOnEmpty) setSelectedIds([]);
       return;
     }
 
@@ -276,23 +300,137 @@ const App: React.FC = () => {
     });
   };
 
+  const handleShapeClick = (id: string, e: any) => {
+    if (tool !== 'select') return;
+    if (e.evt.shiftKey) {
+      if (selectedIds.includes(id)) {
+        setSelectedIds(selectedIds.filter(s => s !== id));
+      } else {
+        setSelectedIds([...selectedIds, id]);
+      }
+    } else {
+      setSelectedIds([id]);
+    }
+  };
+
+  const getShapeGuides = (s: Shape) => {
+    const x = s.x || 0;
+    const y = s.y || 0;
+    let w = 0, h = 0;
+    if (s.type === 'rect') {
+      w = (s as RectShape).width;
+      h = (s as RectShape).height;
+    }
+    return {
+      v: [x, x + w/2, x + w],
+      h: [y, y + h/2, y + h]
+    };
+  };
+
+  const handleDragMove = (e: any, shapeId: string) => {
+    if (tool !== 'select' || !isSnapEnabled || selectedIds.length > 1) return;
+    const node = e.target;
+    
+    // Snapping logic
+    const x = node.x();
+    const y = node.y();
+    const w = (node.width() || 0) * node.scaleX();
+    const h = (node.height() || 0) * node.scaleY();
+    
+    const myV = [x, x + w/2, x + w];
+    const myH = [y, y + h/2, y + h];
+    
+    const snapDist = 10 / scale;
+    let minDx = Infinity, minDy = Infinity;
+
+    shapes.forEach(s => {
+      if (s.id === shapeId) return;
+      const target = getShapeGuides(s);
+      
+      myV.forEach(mv => {
+        target.v.forEach(tv => {
+          if (Math.abs(tv - mv) < Math.abs(minDx)) minDx = tv - mv;
+        });
+      });
+      
+      myH.forEach(mh => {
+        target.h.forEach(th => {
+          if (Math.abs(th - mh) < Math.abs(minDy)) minDy = th - mh;
+        });
+      });
+    });
+
+    if (Math.abs(minDx) < snapDist) node.x(x + minDx);
+    if (Math.abs(minDy) < snapDist) node.y(y + minDy);
+  };
+
+  const alignSelected = (alignment: string) => {
+    if (selectedIds.length < 2) return;
+    
+    const selectedShapes = shapes.filter(s => selectedIds.includes(s.id));
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    selectedShapes.forEach(s => {
+       const x = s.x || 0;
+       const y = s.y || 0;
+       const w = s.type === 'rect' ? (s as RectShape).width : 0;
+       const h = s.type === 'rect' ? (s as RectShape).height : 0;
+       if (x < minX) minX = x;
+       if (y < minY) minY = y;
+       if (x+w > maxX) maxX = x+w;
+       if (y+h > maxY) maxY = y+h;
+    });
+  
+    const newShapes = shapes.map(s => {
+      if (!selectedIds.includes(s.id)) return s;
+      const ns = { ...s };
+      const w = ns.type === 'rect' ? (ns as RectShape).width : 0;
+      const h = ns.type === 'rect' ? (ns as RectShape).height : 0;
+  
+      if (alignment === 'left') ns.x = minX;
+      if (alignment === 'right') ns.x = maxX - w;
+      if (alignment === 'top') ns.y = minY;
+      if (alignment === 'bottom') ns.y = maxY - h;
+      if (alignment === 'centerH') ns.x = minX + (maxX - minX)/2 - w/2;
+      if (alignment === 'centerV') ns.y = minY + (maxY - minY)/2 - h/2;
+      return ns;
+    });
+
+    if (alignment === 'distH' && selectedIds.length > 2) {
+      const sorted = [...selectedShapes].sort((a,b) => (a.x||0) - (b.x||0));
+      const first = sorted[0];
+      const last = sorted[sorted.length-1];
+      const span = (last.x||0) - (first.x||0);
+      const step = span / (sorted.length - 1);
+      sorted.forEach((ss, idx) => {
+         const ns = newShapes.find(x => x.id === ss.id);
+         if (ns) ns.x = (first.x||0) + step * idx;
+      });
+    }
+    
+    if (alignment === 'distV' && selectedIds.length > 2) {
+      const sorted = [...selectedShapes].sort((a,b) => (a.y||0) - (b.y||0));
+      const first = sorted[0];
+      const last = sorted[sorted.length-1];
+      const span = (last.y||0) - (first.y||0);
+      const step = span / (sorted.length - 1);
+      sorted.forEach((ss, idx) => {
+         const ns = newShapes.find(x => x.id === ss.id);
+         if (ns) ns.y = (first.y||0) + step * idx;
+      });
+    }
+  
+    commit(newShapes);
+  };
+
   const autoSuggest = () => {
     if (!image) return;
     const margin = 20;
     const cw = (image.width - margin * 4) / 3;
     const ch = (image.height - margin * 4) / 3;
-    
     const suggested: Shape[] = [];
     for (let row = 0; row < 3; row++) {
       for (let col = 0; col < 3; col++) {
-        suggested.push({
-          id: `auto_${row}_${col}_${Date.now()}`,
-          type: 'rect',
-          x: margin + col * (cw + margin),
-          y: margin + row * (ch + margin),
-          width: cw,
-          height: ch
-        });
+        suggested.push({ id: `auto_${row}_${col}_${Date.now()}`, type: 'rect', x: margin + col * (cw + margin), y: margin + row * (ch + margin), width: cw, height: ch });
       }
     }
     commit([...shapes, ...suggested]);
@@ -301,25 +439,17 @@ const App: React.FC = () => {
   const handleSavePreset = async () => {
     if (shapes.length === 0) return;
     const result = await window.electronAPI.saveMask(shapes);
-    if (result.success) {
-      // alert('Predefinição salva com sucesso!'); // Optional
-    } else if (result.error) {
-      alert(`Erro ao salvar: ${result.error}`);
-    }
+    if (result.error) alert(`Erro ao salvar: ${result.error}`);
   };
 
   const handleLoadPreset = async () => {
     const result = await window.electronAPI.loadMask();
-    if (result.success && result.shapes) {
-      commit(result.shapes);
-    } else if (result.error) {
-      alert(`Erro ao carregar: ${result.error}`);
-    }
+    if (result.success && result.shapes) commit(result.shapes);
+    else if (result.error) alert(`Erro ao carregar: ${result.error}`);
   };
 
   const handleCrop = async () => {
     if (!imagePath || shapes.length === 0) return;
-    
     const scaleX = image!.width;
     const scaleY = image!.height;
     
@@ -340,11 +470,8 @@ const App: React.FC = () => {
     });
 
     const result = await window.electronAPI.cropImage({ imagePath, crops, exportSVG, fileNamePrefix });
-    if (result.success) {
-      alert(`Arquivos salvos com sucesso!\n\n${result.savedTo?.join('\n')}`);
-    } else {
-      alert(`Erro ao salvar: ${result.error}`);
-    }
+    if (result.success) alert(`Arquivos salvos com sucesso!\n\n${result.savedTo?.join('\n')}`);
+    else alert(`Erro ao salvar: ${result.error}`);
   };
 
   return (
@@ -358,7 +485,7 @@ const App: React.FC = () => {
           <h3>Ferramentas</h3>
           <button className={`tool-btn ${tool === 'select' ? 'active' : ''}`} onClick={() => { setTool('select'); setNewPoly([]); }}>Selecionar / Pan</button>
           
-          <button className={`tool-btn ${tool === 'magicwand' ? 'active' : ''}`} onClick={() => { setTool('magicwand'); setNewPoly([]); setSelectedId(null); }} style={{ borderColor: tool === 'magicwand' ? '#ff00ff' : '', backgroundColor: tool === 'magicwand' ? 'rgba(255,0,255,0.1)' : '' }}>🪄 Varinha Mágica</button>
+          <button className={`tool-btn ${tool === 'magicwand' ? 'active' : ''}`} onClick={() => { setTool('magicwand'); setNewPoly([]); setSelectedIds([]); }} style={{ borderColor: tool === 'magicwand' ? '#ff00ff' : '', backgroundColor: tool === 'magicwand' ? 'rgba(255,0,255,0.1)' : '' }}>🪄 Varinha Mágica</button>
           {tool === 'magicwand' && (
             <div style={{ fontSize: 12, padding: '5px 0' }}>
               <label>Tolerância de Cor: {tolerance}</label>
@@ -366,21 +493,41 @@ const App: React.FC = () => {
             </div>
           )}
 
-          <button className={`tool-btn ${tool === 'rect' ? 'active' : ''}`} onClick={() => { setTool('rect'); setNewPoly([]); setSelectedId(null); }}>Retângulo</button>
-          <button className={`tool-btn ${tool === 'polygon' ? 'active' : ''}`} onClick={() => { setTool('polygon'); setNewPoly([]); setSelectedId(null); }}>Polígono (Pontos)</button>
-          <button className={`tool-btn ${tool === 'freehand' ? 'active' : ''}`} onClick={() => { setTool('freehand'); setNewPoly([]); setSelectedId(null); }}>Desenho Livre</button>
+          <button className={`tool-btn ${tool === 'rect' ? 'active' : ''}`} onClick={() => { setTool('rect'); setNewPoly([]); setSelectedIds([]); }}>Retângulo</button>
+          <button className={`tool-btn ${tool === 'polygon' ? 'active' : ''}`} onClick={() => { setTool('polygon'); setNewPoly([]); setSelectedIds([]); }}>Polígono (Pontos)</button>
+          <button className={`tool-btn ${tool === 'freehand' ? 'active' : ''}`} onClick={() => { setTool('freehand'); setNewPoly([]); setSelectedIds([]); }}>Desenho Livre</button>
         </div>
 
         <div className="tools-group">
-          <h3>Ações da Máscara</h3>
+          <h3>Ações e Layout</h3>
           <div style={{ display: 'flex', gap: 5 }}>
             <button className="tool-btn" style={{ flex: 1 }} onClick={undo} disabled={past.length === 0}>Desfazer</button>
             <button className="tool-btn" style={{ flex: 1 }} onClick={redo} disabled={future.length === 0}>Refazer</button>
           </div>
-          <button className="tool-btn" onClick={deleteSelected} disabled={!selectedId} style={{ borderColor: selectedId ? 'red' : '' }}>Apagar Selecionada</button>
-          <button className="tool-btn" onClick={autoSuggest}>Auto Sugerir (Grade 3x3)</button>
+          <button className="tool-btn" onClick={deleteSelected} disabled={selectedIds.length === 0} style={{ borderColor: selectedIds.length > 0 ? 'red' : '' }}>Apagar Selecionada(s)</button>
           
-          <div style={{ display: 'flex', gap: 5, marginTop: '10px' }}>
+          <label style={{ fontSize: 12, display: 'flex', alignItems: 'center', gap: 5, marginTop: '10px' }}>
+            <input type="checkbox" checked={isSnapEnabled} onChange={e => setIsSnapEnabled(e.target.checked)} />
+            Snap Inteligente (Ímã)
+          </label>
+
+          {selectedIds.length > 1 && (
+            <div style={{ marginTop: '10px' }}>
+              <p style={{ fontSize: 11, marginBottom: 5 }}>Alinhar:</p>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '5px' }}>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3 }} onClick={() => alignSelected('left')}>Esquerda</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3 }} onClick={() => alignSelected('centerH')}>Centro H.</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3 }} onClick={() => alignSelected('right')}>Direita</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3 }} onClick={() => alignSelected('top')}>Topo</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3 }} onClick={() => alignSelected('centerV')}>Centro V.</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3 }} onClick={() => alignSelected('bottom')}>Base</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3, gridColumn: 'span 3' }} onClick={() => alignSelected('distH')}>Distribuir Horizontalmente</button>
+                <button className="tool-btn" style={{ fontSize: 10, padding: 3, gridColumn: 'span 3' }} onClick={() => alignSelected('distV')}>Distribuir Verticalmente</button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 5, marginTop: '15px' }}>
             <button className="tool-btn" style={{ flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.1)' }} onClick={handleLoadPreset}>📂 Carregar</button>
             <button className="tool-btn" style={{ flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.1)' }} onClick={handleSavePreset} disabled={shapes.length === 0}>💾 Salvar</button>
           </div>
@@ -388,6 +535,8 @@ const App: React.FC = () => {
 
         <div className="tools-group" style={{ marginTop: 'auto' }}>
           <h3>Exportar</h3>
+          <button className="tool-btn" onClick={autoSuggest} style={{ marginBottom: '10px' }}>Auto Sugerir (Grade 3x3)</button>
+          
           <div style={{ marginBottom: '10px' }}>
             <label style={{ fontSize: 13, display: 'block', marginBottom: '5px' }}>Nome Base dos Arquivos:</label>
             <input 
@@ -402,7 +551,7 @@ const App: React.FC = () => {
             <input type="checkbox" checked={exportSVG} onChange={e => setExportSVG(e.target.checked)} />
             Exportar SVG (Vetores)
           </label>
-          <button onClick={handleCrop} style={{ backgroundColor: '#28a745' }}>Recortar e Salvar</button>
+          <button onClick={handleCrop} style={{ backgroundColor: '#28a745', marginTop: '10px' }}>Recortar e Salvar</button>
         </div>
       </div>
       
@@ -439,7 +588,7 @@ const App: React.FC = () => {
               <KonvaImage image={image} name="backgroundImage" />
               
               {shapes.map((shape) => {
-                const isSelected = shape.id === selectedId;
+                const isSelected = selectedIds.includes(shape.id);
                 const strokeColor = isSelected ? 'red' : (shape.type === 'polygon' || shape.type === 'freehand' ? 'cyan' : 'green');
                 const fillColor = isSelected ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 255, 0.2)';
 
@@ -453,11 +602,12 @@ const App: React.FC = () => {
                       y={r.y}
                       width={r.width}
                       height={r.height}
-                      fill={isSelected ? 'rgba(255, 0, 0, 0.2)' : 'rgba(0, 255, 0, 0.2)'}
-                      stroke={isSelected ? 'red' : 'green'}
+                      fill={fillColor}
+                      stroke={strokeColor}
                       strokeWidth={2 / scale}
                       draggable={tool === 'select'}
-                      onClick={() => tool === 'select' && setSelectedId(r.id)}
+                      onClick={(e) => handleShapeClick(r.id, e)}
+                      onDragMove={(e) => handleDragMove(e, r.id)}
                       onMouseEnter={(e) => {
                         if (tool === 'select') {
                           const container = e.target.getStage()?.container();
@@ -492,13 +642,7 @@ const App: React.FC = () => {
                         node.scaleY(1);
                         const newShapes = shapes.map(s => {
                           if (s.id === r.id) {
-                            return {
-                              ...r,
-                              x: node.x(),
-                              y: node.y(),
-                              width: Math.max(5, r.width * scaleX),
-                              height: Math.max(5, r.height * scaleY),
-                            };
+                            return { ...r, x: node.x(), y: node.y(), width: Math.max(5, r.width * scaleX), height: Math.max(5, r.height * scaleY) };
                           }
                           return s;
                         });
@@ -521,7 +665,8 @@ const App: React.FC = () => {
                       closed={true}
                       tension={p.type === 'freehand' ? 0.5 : 0}
                       draggable={tool === 'select'}
-                      onClick={() => tool === 'select' && setSelectedId(p.id)}
+                      onClick={(e) => handleShapeClick(p.id, e)}
+                      onDragMove={(e) => handleDragMove(e, p.id)}
                       onMouseEnter={(e) => {
                         if (tool === 'select') {
                           const container = e.target.getStage()?.container();
@@ -569,32 +714,16 @@ const App: React.FC = () => {
               })}
               
               {newRect && (
-                <Rect
-                  x={newRect.x}
-                  y={newRect.y}
-                  width={newRect.width}
-                  height={newRect.height}
-                  fill="rgba(0, 255, 0, 0.2)"
-                  stroke="green"
-                  strokeWidth={2 / scale}
-                />
+                <Rect x={newRect.x} y={newRect.y} width={newRect.width} height={newRect.height} fill="rgba(0, 255, 0, 0.2)" stroke="green" strokeWidth={2 / scale} />
               )}
               {newPoly.length > 0 && (
                 <Group>
-                  <Line
-                    points={newPoly}
-                    stroke="cyan"
-                    strokeWidth={2 / scale}
-                    tension={tool === 'freehand' ? 0.5 : 0}
-                    closed={false}
-                  />
-                  {tool === 'polygon' && newPoly.length >= 2 && (
-                    <Circle x={newPoly[0]} y={newPoly[1]} radius={5 / scale} fill="yellow" stroke="black" strokeWidth={1/scale} />
-                  )}
+                  <Line points={newPoly} stroke="cyan" strokeWidth={2 / scale} tension={tool === 'freehand' ? 0.5 : 0} closed={false} />
+                  {tool === 'polygon' && newPoly.length >= 2 && <Circle x={newPoly[0]} y={newPoly[1]} radius={5 / scale} fill="yellow" stroke="black" strokeWidth={1/scale} />}
                 </Group>
               )}
 
-              {selectedId && (
+              {selectedIds.length > 0 && (
                 <Transformer
                   ref={trRef}
                   boundBoxFunc={(oldBox, newBox) => {
