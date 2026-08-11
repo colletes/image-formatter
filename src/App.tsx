@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Stage, Layer, Image as KonvaImage, Rect, Line, Group, Circle } from 'react-konva';
+import { Stage, Layer, Image as KonvaImage, Rect, Line, Group, Circle, Transformer } from 'react-konva';
 import Konva from 'konva';
 import { getMagicWandPolygon } from './utils/cv';
 
@@ -55,6 +55,19 @@ const App: React.FC = () => {
   const [scale, setScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   const stageRef = useRef<Konva.Stage>(null);
+  const trRef = useRef<Konva.Transformer>(null);
+
+  useEffect(() => {
+    if (selectedId && trRef.current && stageRef.current) {
+      const node = stageRef.current.findOne('#' + selectedId);
+      if (node) {
+        trRef.current.nodes([node]);
+        trRef.current.getLayer()?.batchDraw();
+      }
+    } else if (trRef.current) {
+      trRef.current.nodes([]);
+    }
+  }, [selectedId, shapes]);
 
   const commit = useCallback((newShapes: Shape[]) => {
     setPast((prev) => [...prev, shapes]);
@@ -358,7 +371,19 @@ const App: React.FC = () => {
             y={stagePos.y}
             draggable={tool === 'select'}
             ref={stageRef}
-            style={{ cursor: tool === 'magicwand' ? 'crosshair' : 'default' }}
+            style={{ cursor: tool === 'select' ? 'default' : 'crosshair' }}
+            onDragStart={(e) => {
+              if (tool === 'select' && e.target === e.target.getStage()) {
+                const container = e.target.getStage()?.container();
+                if (container) container.style.cursor = 'grabbing';
+              }
+            }}
+            onDragEnd={(e) => {
+              if (tool === 'select' && e.target === e.target.getStage()) {
+                const container = e.target.getStage()?.container();
+                if (container) container.style.cursor = 'default';
+              }
+            }}
           >
             <Layer>
               <KonvaImage image={image} name="backgroundImage" />
@@ -373,6 +398,7 @@ const App: React.FC = () => {
                   return (
                     <Rect
                       key={r.id}
+                      id={r.id}
                       x={r.x}
                       y={r.y}
                       width={r.width}
@@ -382,8 +408,50 @@ const App: React.FC = () => {
                       strokeWidth={2 / scale}
                       draggable={tool === 'select'}
                       onClick={() => tool === 'select' && setSelectedId(r.id)}
+                      onMouseEnter={(e) => {
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'grab';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'default';
+                        }
+                      }}
+                      onDragStart={(e) => {
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'grabbing';
+                        }
+                      }}
                       onDragEnd={(e) => {
-                        const newShapes = shapes.map(s => s.id === r.id ? { ...r, x: e.target.x(), y: e.target.y() } : s);
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'grab';
+                          const newShapes = shapes.map(s => s.id === r.id ? { ...r, x: e.target.x(), y: e.target.y() } : s);
+                          commit(newShapes);
+                        }
+                      }}
+                      onTransformEnd={(e) => {
+                        const node = e.target;
+                        const scaleX = node.scaleX();
+                        const scaleY = node.scaleY();
+                        node.scaleX(1);
+                        node.scaleY(1);
+                        const newShapes = shapes.map(s => {
+                          if (s.id === r.id) {
+                            return {
+                              ...r,
+                              x: node.x(),
+                              y: node.y(),
+                              width: Math.max(5, r.width * scaleX),
+                              height: Math.max(5, r.height * scaleY),
+                            };
+                          }
+                          return s;
+                        });
                         commit(newShapes);
                       }}
                     />
@@ -393,6 +461,7 @@ const App: React.FC = () => {
                   return (
                     <Line
                       key={p.id}
+                      id={p.id}
                       points={p.points}
                       x={p.x || 0}
                       y={p.y || 0}
@@ -403,8 +472,45 @@ const App: React.FC = () => {
                       tension={p.type === 'freehand' ? 0.5 : 0}
                       draggable={tool === 'select'}
                       onClick={() => tool === 'select' && setSelectedId(p.id)}
+                      onMouseEnter={(e) => {
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'grab';
+                        }
+                      }}
+                      onMouseLeave={(e) => {
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'default';
+                        }
+                      }}
+                      onDragStart={(e) => {
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'grabbing';
+                        }
+                      }}
                       onDragEnd={(e) => {
-                        const newShapes = shapes.map(s => s.id === p.id ? { ...p, x: e.target.x(), y: e.target.y() } : s);
+                        if (tool === 'select') {
+                          const container = e.target.getStage()?.container();
+                          if (container) container.style.cursor = 'grab';
+                          const newShapes = shapes.map(s => s.id === p.id ? { ...p, x: e.target.x(), y: e.target.y() } : s);
+                          commit(newShapes);
+                        }
+                      }}
+                      onTransformEnd={(e) => {
+                        const node = e.target;
+                        const scaleX = node.scaleX();
+                        const scaleY = node.scaleY();
+                        node.scaleX(1);
+                        node.scaleY(1);
+                        const newShapes = shapes.map(s => {
+                          if (s.id === p.id) {
+                            const newPoints = p.points.map((pt, i) => i % 2 === 0 ? pt * scaleX : pt * scaleY);
+                            return { ...p, points: newPoints, x: node.x(), y: node.y() };
+                          }
+                          return s;
+                        });
                         commit(newShapes);
                       }}
                     />
@@ -436,6 +542,16 @@ const App: React.FC = () => {
                     <Circle x={newPoly[0]} y={newPoly[1]} radius={5 / scale} fill="yellow" stroke="black" strokeWidth={1/scale} />
                   )}
                 </Group>
+              )}
+
+              {selectedId && (
+                <Transformer
+                  ref={trRef}
+                  boundBoxFunc={(oldBox, newBox) => {
+                    if (newBox.width < 5 || newBox.height < 5) return oldBox;
+                    return newBox;
+                  }}
+                />
               )}
             </Layer>
           </Stage>
