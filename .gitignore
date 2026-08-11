@@ -1,0 +1,6 @@
+node_modules
+dist
+dist-electron
+.npm-cache
+.DS_Store
+*.log

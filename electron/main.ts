@@ -3,7 +3,6 @@ import * as path from 'path';
 import * as fs from 'fs';
 import sharp from 'sharp';
 
-// Desabilita avisos de segurança se estivermos carregando do localhost no dev
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
 let mainWindow: BrowserWindow | null = null;
@@ -29,7 +28,6 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
-  // Define tema escuro se o OS for escuro
   nativeTheme.themeSource = 'system';
 }
 
@@ -65,11 +63,8 @@ ipcMain.handle('dialog:openFile', async () => {
   const isPDF = filePath.toLowerCase().endsWith('.pdf');
   
   if (isPDF) {
-     // TODO: Implement PDF to Image conversion
-     // We will return the first page as an image
      return { path: filePath, isPDF: true, previewPath: null };
   } else {
-     // Read image as base64 for preview
      const bitmap = fs.readFileSync(filePath);
      const base64 = Buffer.from(bitmap).toString('base64');
      const ext = path.extname(filePath).substring(1);
@@ -79,7 +74,7 @@ ipcMain.handle('dialog:openFile', async () => {
 });
 
 ipcMain.handle('image:crop', async (_, args) => {
-  const { imagePath, crops } = args;
+  const { imagePath, crops, exportSVG } = args;
   try {
     const dir = path.dirname(imagePath);
     const basename = path.basename(imagePath, path.extname(imagePath));
@@ -92,24 +87,79 @@ ipcMain.handle('image:crop', async (_, args) => {
     const metadata = await sharp(imagePath).metadata();
     if (!metadata.width || !metadata.height) throw new Error("Invalid image metadata");
 
+    const mw = metadata.width;
+    const mh = metadata.height;
+
     const promises = crops.map(async (crop: any, index: number) => {
-      // Crop expects relative percentages
-      const left = Math.max(0, Math.round(crop.x * metadata.width!));
-      const top = Math.max(0, Math.round(crop.y * metadata.height!));
-      let width = Math.round(crop.width * metadata.width!);
-      let height = Math.round(crop.height * metadata.height!);
+      if (crop.type === 'rect') {
+        let left = Math.max(0, Math.round(crop.x * mw));
+        let top = Math.max(0, Math.round(crop.y * mh));
+        let width = Math.round(crop.width * mw);
+        let height = Math.round(crop.height * mh);
 
-      // Bounds checking
-      if (left + width > metadata.width!) width = metadata.width! - left;
-      if (top + height > metadata.height!) height = metadata.height! - top;
-      if (width <= 0 || height <= 0) return null;
+        if (left + width > mw) width = mw - left;
+        if (top + height > mh) height = mh - top;
+        if (width <= 0 || height <= 0) return null;
 
-      const outPath = path.join(outDir, `${basename}_crop_${index + 1}.jpg`);
-      await sharp(imagePath)
-        .extract({ left, top, width, height })
-        .toFile(outPath);
-      
-      return outPath;
+        const outPath = path.join(outDir, `${basename}_crop_${index + 1}.jpg`);
+        await sharp(imagePath)
+          .extract({ left, top, width, height })
+          .toFile(outPath);
+        
+        return outPath;
+      } else {
+        // Polygon or freehand
+        const points = crop.points;
+        if (!points || points.length < 3) return null;
+
+        // Calculate bounding box
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const pt of points) {
+          const absX = pt.x * mw;
+          const absY = pt.y * mh;
+          if (absX < minX) minX = absX;
+          if (absY < minY) minY = absY;
+          if (absX > maxX) maxX = absX;
+          if (absY > maxY) maxY = absY;
+        }
+
+        let left = Math.max(0, Math.floor(minX));
+        let top = Math.max(0, Math.floor(minY));
+        let width = Math.ceil(maxX - minX);
+        let height = Math.ceil(maxY - minY);
+
+        if (left + width > mw) width = mw - left;
+        if (top + height > mh) height = mh - top;
+        if (width <= 0 || height <= 0) return null;
+
+        // Build SVG path relative to the extracted bounding box
+        let pathData = '';
+        points.forEach((pt: any, i: number) => {
+          const x = (pt.x * mw) - left;
+          const y = (pt.y * mh) - top;
+          pathData += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
+        });
+        pathData += 'Z';
+
+        const svgBuffer = Buffer.from(
+          `<svg width="${width}" height="${height}"><path d="${pathData}" fill="black" /></svg>`
+        );
+
+        const outPath = path.join(outDir, `${basename}_crop_${index + 1}.png`);
+        await sharp(imagePath)
+          .extract({ left, top, width, height })
+          .composite([{ input: svgBuffer, blend: 'dest-in' }])
+          .png()
+          .toFile(outPath);
+        
+        // Export SVG if requested
+        if (exportSVG) {
+          const svgOutPath = path.join(outDir, `${basename}_crop_${index + 1}.svg`);
+          fs.writeFileSync(svgOutPath, `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><path d="${pathData}" fill="none" stroke="red" stroke-width="1"/></svg>`);
+        }
+
+        return outPath;
+      }
     });
 
     const results = await Promise.all(promises);
