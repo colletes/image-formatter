@@ -7,7 +7,7 @@ declare global {
   interface Window {
     electronAPI: {
       openFile: () => Promise<{ path: string, isPDF: boolean, previewData?: string, previewPath?: string } | null>;
-      cropImage: (args: { imagePath: string, crops: any[], exportSVG: boolean }) => Promise<{ success: boolean, savedTo?: string[], error?: string }>;
+      cropImage: (args: { imagePath: string, crops: any[], exportSVG: boolean, fileNamePrefix?: string }) => Promise<{ success: boolean, savedTo?: string[], error?: string }>;
     }
   }
 }
@@ -45,6 +45,7 @@ const App: React.FC = () => {
   const [tool, setTool] = useState<Tool>('select');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [exportSVG, setExportSVG] = useState(false);
+  const [fileNamePrefix, setFileNamePrefix] = useState('');
   const [tolerance, setTolerance] = useState(30);
 
   const [isDrawing, setIsDrawing] = useState(false);
@@ -280,7 +281,7 @@ const App: React.FC = () => {
       }
     });
 
-    const result = await window.electronAPI.cropImage({ imagePath, crops, exportSVG });
+    const result = await window.electronAPI.cropImage({ imagePath, crops, exportSVG, fileNamePrefix });
     if (result.success) {
       alert(`Arquivos salvos com sucesso!\n\n${result.savedTo?.join('\n')}`);
     } else {
@@ -324,6 +325,16 @@ const App: React.FC = () => {
 
         <div className="tools-group" style={{ marginTop: 'auto' }}>
           <h3>Exportar</h3>
+          <div style={{ marginBottom: '10px' }}>
+            <label style={{ fontSize: 13, display: 'block', marginBottom: '5px' }}>Nome Base dos Arquivos:</label>
+            <input 
+              type="text" 
+              value={fileNamePrefix} 
+              onChange={e => setFileNamePrefix(e.target.value)} 
+              placeholder="Ex: carta_monstro"
+              style={{ width: '100%', padding: '5px', boxSizing: 'border-box', background: 'var(--bg-color)', color: 'var(--text-color)', border: '1px solid #ccc', borderRadius: '4px' }}
+            />
+          </div>
           <label style={{ fontSize: 13, display: 'flex', alignItems: 'center', gap: 5 }}>
             <input type="checkbox" checked={exportSVG} onChange={e => setExportSVG(e.target.checked)} />
             Exportar SVG (Vetores)

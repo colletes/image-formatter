@@ -49,8 +49,11 @@ app.on('window-all-closed', () => {
 
 // --- IPC Handlers ---
 
+let lastOpenDirectory: string | undefined = undefined;
+
 ipcMain.handle('dialog:openFile', async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
+    defaultPath: lastOpenDirectory,
     properties: ['openFile'],
     filters: [
       { name: 'Images & PDFs', extensions: ['jpg', 'png', 'jpeg', 'webp', 'pdf'] }
@@ -60,6 +63,7 @@ ipcMain.handle('dialog:openFile', async () => {
     return null;
   }
   const filePath = filePaths[0];
+  lastOpenDirectory = path.dirname(filePath);
   const isPDF = filePath.toLowerCase().endsWith('.pdf');
   
   if (isPDF) {
@@ -74,10 +78,12 @@ ipcMain.handle('dialog:openFile', async () => {
 });
 
 ipcMain.handle('image:crop', async (_, args) => {
-  const { imagePath, crops, exportSVG } = args;
+  const { imagePath, crops, exportSVG, fileNamePrefix } = args;
   try {
     const dir = path.dirname(imagePath);
-    const basename = path.basename(imagePath, path.extname(imagePath));
+    const basename = fileNamePrefix && fileNamePrefix.trim() !== '' 
+      ? fileNamePrefix.trim() 
+      : path.basename(imagePath, path.extname(imagePath));
     const outDir = path.join(dir, 'cropped');
     
     if (!fs.existsSync(outDir)) {
