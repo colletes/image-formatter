@@ -8,6 +8,8 @@ declare global {
     electronAPI: {
       openFile: () => Promise<{ path: string, isPDF: boolean, previewData?: string, previewPath?: string } | null>;
       cropImage: (args: { imagePath: string, crops: any[], exportSVG: boolean, fileNamePrefix?: string }) => Promise<{ success: boolean, savedTo?: string[], error?: string }>;
+      saveMask: (shapes: Shape[]) => Promise<{ success: boolean, error?: string }>;
+      loadMask: () => Promise<{ success: boolean, shapes?: Shape[], error?: string }>;
     }
   }
 }
@@ -296,6 +298,25 @@ const App: React.FC = () => {
     commit([...shapes, ...suggested]);
   };
 
+  const handleSavePreset = async () => {
+    if (shapes.length === 0) return;
+    const result = await window.electronAPI.saveMask(shapes);
+    if (result.success) {
+      // alert('Predefinição salva com sucesso!'); // Optional
+    } else if (result.error) {
+      alert(`Erro ao salvar: ${result.error}`);
+    }
+  };
+
+  const handleLoadPreset = async () => {
+    const result = await window.electronAPI.loadMask();
+    if (result.success && result.shapes) {
+      commit(result.shapes);
+    } else if (result.error) {
+      alert(`Erro ao carregar: ${result.error}`);
+    }
+  };
+
   const handleCrop = async () => {
     if (!imagePath || shapes.length === 0) return;
     
@@ -358,6 +379,11 @@ const App: React.FC = () => {
           </div>
           <button className="tool-btn" onClick={deleteSelected} disabled={!selectedId} style={{ borderColor: selectedId ? 'red' : '' }}>Apagar Selecionada</button>
           <button className="tool-btn" onClick={autoSuggest}>Auto Sugerir (Grade 3x3)</button>
+          
+          <div style={{ display: 'flex', gap: 5, marginTop: '10px' }}>
+            <button className="tool-btn" style={{ flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.1)' }} onClick={handleLoadPreset}>📂 Carregar</button>
+            <button className="tool-btn" style={{ flex: 1, backgroundColor: 'rgba(255, 255, 255, 0.1)' }} onClick={handleSavePreset} disabled={shapes.length === 0}>💾 Salvar</button>
+          </div>
         </div>
 
         <div className="tools-group" style={{ marginTop: 'auto' }}>

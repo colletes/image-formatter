@@ -175,3 +175,35 @@ ipcMain.handle('image:crop', async (_, args) => {
     return { success: false, error: err.message };
   }
 });
+
+ipcMain.handle('mask:save', async (_, shapes) => {
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    title: 'Salvar Predefinição de Máscaras',
+    defaultPath: lastOpenDirectory ? path.join(lastOpenDirectory, 'mascaras.json') : 'mascaras.json',
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (canceled || !filePath) return { success: false };
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(shapes, null, 2));
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+ipcMain.handle('mask:load', async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog({
+    title: 'Carregar Predefinição de Máscaras',
+    defaultPath: lastOpenDirectory,
+    properties: ['openFile'],
+    filters: [{ name: 'JSON', extensions: ['json'] }]
+  });
+  if (canceled || filePaths.length === 0) return { success: false };
+  try {
+    const data = fs.readFileSync(filePaths[0], 'utf-8');
+    const shapes = JSON.parse(data);
+    return { success: true, shapes };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
